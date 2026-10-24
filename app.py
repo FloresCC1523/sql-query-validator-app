@@ -349,6 +349,7 @@ Rules:
 - For trends "over quarters" or "over the last four quarters", GROUP BY reporting_date and ORDER BY reporting_date. The database has exactly four quarters, so no date filter is needed.
 - Show money amounts in USD millions: ROUND(SUM(column) / 1e6, 2), with an alias ending in _mn.
 - Calculate percentages with 100.0 * ... so they are not rounded to whole numbers, and ROUND to 2 decimals.
+- Overall percentage next to a row-level list: ROUND(100.0 * SUM(CASE WHEN ... THEN 1 ELSE 0 END) OVER () / COUNT(*) OVER (), 2). Both SUM and COUNT need OVER (). Show money in lists as ROUND(total_outstanding / 1e6, 2) AS total_outstanding_mn.
 - If the question asks for a list AND an overall figure (such as a total percentage),
   return the list and include the overall figure as an extra column using a window function
   (e.g., SUM(...) OVER ()).
@@ -450,6 +451,7 @@ Important facts about this database (do NOT fail a query for these):
 - Window functions such as SUM(...) OVER () or COUNT(*) OVER () are a valid way to show an
   overall figure (e.g., an overall percentage) next to a row-level list. No GROUP BY is needed for that.
 - "Stage 1/2/3" must use provisioning.ifrs9_stage (not asset_classification). Answer "no" if a Stage question uses asset_classification instead.
+- Check percentage math: an overall percentage must divide by the full group (e.g., COUNT(*) OVER ()). Answer "no" if a percentage could exceed 100%.
 - Only answer "no" if the query uses wrong tables/columns, wrong logic, or clearly misses
   part of what was asked.
 
@@ -565,6 +567,8 @@ Rules:
   (e.g., all sectors when the user asked about one), use only the relevant rows.
 - Use the exact figures from the result. Never invent or estimate numbers.
 - Columns ending in _mn are in USD millions; write them like "$1,195.3M".
+- Money columns WITHOUT _mn are in plain USD (e.g., 3106000.0 = $3.1M). A percentage above 100% is a calculation error: say so instead of reporting it.
+- For long lists, give the totals and highlight the most important rows instead of listing every row.
 - If useful, add one short business insight (e.g., concentration, trend, risk signal).
 - Keep it to 3-6 sentences or a few short bullet points.
 
