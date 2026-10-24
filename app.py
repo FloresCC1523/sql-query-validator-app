@@ -40,7 +40,8 @@ os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 if OPENAI_API_BASE:
     os.environ["OPENAI_BASE_URL"] = OPENAI_API_BASE
 
-MODEL_NAME = "gpt-4o-mini"   # change if your course uses a different model
+MODEL_NAME = "gpt-4o-mini"        # main model: routing, SQL, answers
+EVALUATOR_MODEL = "gpt-4o"        # stronger model for reviewing SQL
 
 @st.cache_resource
 def get_llms(api_key, api_base):
@@ -49,7 +50,7 @@ def get_llms(api_key, api_base):
     if api_base:
         kwargs["base_url"] = api_base
     return (ChatOpenAI(model=MODEL_NAME, temperature=0, **kwargs),
-            ChatOpenAI(model=MODEL_NAME, temperature=0, **kwargs))
+            ChatOpenAI(model=EVALUATOR_MODEL, temperature=0, **kwargs))
 
 llm, evaluator_llm = get_llms(OPENAI_API_KEY, OPENAI_API_BASE)
 
@@ -341,10 +342,11 @@ Rules:
 - Return a single read-only statement that starts with SELECT or WITH. No semicolon at the end.
 - Use only tables and columns that exist in the schema. Join tables on the keys described.
 - NPA, non-performing, and impaired loans mean asset_classification IN ('Substandard', 'Doubtful', 'Loss').
+- "Stage 1/2/3" means the IFRS 9 stage: provisioning.ifrs9_stage = 1, 2 or 3 (NOT asset_classification). Stage book size = SUM(ead_amount); its expected credit loss = SUM(ecl_amount).
 - "Latest" or "current" quarter means reporting_date = '2025-09-30' (provisioning)
   or rating_date = '2025-09-30' (borrower_rating).
 - loan_master has no date column (it is a current snapshot): never add a date filter to it.
-- For trends "over quarters", GROUP BY reporting_date and ORDER BY reporting_date (no single-date filter).
+- For trends "over quarters" or "over the last four quarters", GROUP BY reporting_date and ORDER BY reporting_date. The database has exactly four quarters, so no date filter is needed.
 - Show money amounts in USD millions: ROUND(SUM(column) / 1e6, 2), with an alias ending in _mn.
 - Calculate percentages with 100.0 * ... so they are not rounded to whole numbers, and ROUND to 2 decimals.
 - If the question asks for a list AND an overall figure (such as a total percentage),
@@ -442,10 +444,12 @@ Important facts about this database (do NOT fail a query for these):
 - Only provisioning (reporting_date) and borrower_rating (rating_date) have dates.
   A "latest quarter" filter (= '2025-09-30') is needed ONLY when the question asks about
   the latest/current period AND the query uses one of those two tables.
-  Questions about trends or "over the last four quarters" must NOT filter to one date;
-  they should group by the date instead.
+  Questions about trends or "over the last four quarters" should GROUP BY reporting_date.
+  Filtering to the last four quarters (e.g., reporting_date IN (...) or >= '2024-12-31') is also CORRECT.
+  Only fail a trend query if it collapses the result to a single date.
 - Window functions such as SUM(...) OVER () or COUNT(*) OVER () are a valid way to show an
   overall figure (e.g., an overall percentage) next to a row-level list. No GROUP BY is needed for that.
+- "Stage 1/2/3" must use provisioning.ifrs9_stage (not asset_classification). Answer "no" if a Stage question uses asset_classification instead.
 - Only answer "no" if the query uses wrong tables/columns, wrong logic, or clearly misses
   part of what was asked.
 
