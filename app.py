@@ -43,27 +43,32 @@ if OPENAI_API_BASE:
 MODEL_NAME = "gpt-4o-mini"   # change if your course uses a different model
 
 @st.cache_resource
-def get_llms():
-    return (ChatOpenAI(model=MODEL_NAME, temperature=0),
-            ChatOpenAI(model=MODEL_NAME, temperature=0))
+def get_llms(api_key, api_base):
+    # cached per key: changing the key in Secrets creates fresh models (no reboot needed)
+    kwargs = {"api_key": api_key}
+    if api_base:
+        kwargs["base_url"] = api_base
+    return (ChatOpenAI(model=MODEL_NAME, temperature=0, **kwargs),
+            ChatOpenAI(model=MODEL_NAME, temperature=0, **kwargs))
 
-llm, evaluator_llm = get_llms()
+llm, evaluator_llm = get_llms(OPENAI_API_KEY, OPENAI_API_BASE)
 
 # ---------------------------------------------------------------
 # Database: finds the .db file next to app.py, opens it read-only
 # ---------------------------------------------------------------
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
-@st.cache_resource
-def get_connection():
-    db_files = sorted(glob.glob(os.path.join(APP_DIR, "*.db")))
-    if not db_files:
-        return None, None
-    db_path = db_files[0]
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, check_same_thread=False)
-    return conn, os.path.basename(db_path)
+def find_db():
+    db_files = sorted(glob.glob(os.path.join(APP_DIR, "**", "*.db"), recursive=True))
+    return db_files[0] if db_files else None
 
-conn, db_name = get_connection()
+@st.cache_resource
+def get_connection(db_path):
+    return sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, check_same_thread=False)
+
+db_path = find_db()
+conn = get_connection(db_path) if db_path else None
+db_name = os.path.basename(db_path) if db_path else None
 if conn is None:
     st.error("No .db file found. Upload your SQLite database file to the repository next to app.py.")
     st.stop()
@@ -338,6 +343,8 @@ Rules:
 - NPA, non-performing, and impaired loans mean asset_classification IN ('Substandard', 'Doubtful', 'Loss').
 - "Latest" or "current" quarter means reporting_date = '2025-09-30' (provisioning)
   or rating_date = '2025-09-30' (borrower_rating).
+- loan_master has no date column (it is a current snapshot): never add a date filter to it.
+- For trends "over quarters", GROUP BY reporting_date and ORDER BY reporting_date (no single-date filter).
 - Show money amounts in USD millions: ROUND(SUM(column) / 1e6, 2), with an alias ending in _mn.
 - Calculate percentages with 100.0 * ... so they are not rounded to whole numbers, and ROUND to 2 decimals.
 - If the question asks for a list AND an overall figure (such as a total percentage),
@@ -426,9 +433,21 @@ answers the user's question. Review:
 - Are the right tables and joins used?
 - Are the right metrics and columns used (e.g., total_outstanding, ead_amount, ecl_amount, interest_rate)?
 - Are the aggregations (SUM, AVG, COUNT) and grouping correct?
-- Are filters correct? NPA / impaired = asset_classification IN ('Substandard', 'Doubtful', 'Loss');
-  latest quarter = '2025-09-30'.
+- Are filters correct? NPA / impaired = asset_classification IN ('Substandard', 'Doubtful', 'Loss').
 - Does the result contain what the user asked for?
+
+Important facts about this database (do NOT fail a query for these):
+- loan_master and sector_master have NO date columns. They are a current snapshot,
+  so queries on them need NO date or quarter filter.
+- Only provisioning (reporting_date) and borrower_rating (rating_date) have dates.
+  A "latest quarter" filter (= '2025-09-30') is needed ONLY when the question asks about
+  the latest/current period AND the query uses one of those two tables.
+  Questions about trends or "over the last four quarters" must NOT filter to one date;
+  they should group by the date instead.
+- Window functions such as SUM(...) OVER () or COUNT(*) OVER () are a valid way to show an
+  overall figure (e.g., an overall percentage) next to a row-level list. No GROUP BY is needed for that.
+- Only answer "no" if the query uses wrong tables/columns, wrong logic, or clearly misses
+  part of what was asked.
 
 Context about this query:
 {track_context}
